@@ -50,5 +50,5 @@ app.delete('/api/todos/:id', async (req,res) => {
 });
 
 // app.listen(3000, () => console.log('is up on http://localhost:3000'));
-module.exports = app;
-module.exports.handler = serverless(app);
+// module.exports = app;
+module.exports = serverless(app);

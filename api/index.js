@@ -4,27 +4,16 @@ const cors = require('cors');
 const serverless = require('serverless-http');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
-const session = require('express-session');
+const jwt = require('jsonwebtoken');
 
 const app = express();
 
 app.use(cors({
-    origin: process.env.CLIENT_URL || 'https://todo-api-henna.vercel.app',
+    origin: process.env.CLIENT_URL || 'http://localhost:5173',
     credentials: true
 }));
 app.use(express.json());
-app.use(session({
-    secret: process.env.SESSION_SECRET || '9848f73fd23c98fba6e4b4d3e32fa968cdffb8e2366f34679427223a5b1e3afc',
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-        secure: process.env.NODE_ENV === 'production',
-        httpOnly: true,
-        maxAge: 24 * 60 * 60 * 1000 // 24 hours
-    }
-}));
 app.use(passport.initialize());
-app.use(passport.session());
 
 mongoose.connect(process.env.MONGODB_URI)
     .then(() => console.log('connected to mongoDB'))
@@ -60,6 +49,7 @@ passport.use(new GoogleStrategy({
                 googleId: profile.id,
                 email: profile.emails[0].value,
                 name: profile.displayName,
+                picture: profile.photos?.[0]?.value
             });
         }
         
@@ -69,25 +59,25 @@ passport.use(new GoogleStrategy({
     }
 }));
 
-passport.serializeUser((user, done) => {
-    done(null, user.id);
-});
-
-passport.deserializeUser(async (id, done) => {
+// Middleware to verify JWT
+const verifyToken = async (req, res, next) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    
+    if (!token) {
+        return res.status(401).json({ message: 'Unauthorized' });
+    }
+    
     try {
-        const user = await Users.findById(id);
-        done(null, user);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await Users.findById(decoded.userId);
+        if (!user) {
+            return res.status(401).json({ message: 'User not found' });
+        }
+        req.user = user;
+        next();
     } catch (error) {
-        done(error, null);
+        res.status(401).json({ message: 'Invalid token' });
     }
-});
-
-// Middleware to check authentication
-const isAuthenticated = (req, res, next) => {
-    if (req.isAuthenticated()) {
-        return next();
-    }
-    res.status(401).json({ message: 'Unauthorized' });
 };
 
 // Auth routes
@@ -96,30 +86,30 @@ app.get('/api/auth/google',
 );
 
 app.get('/api/auth/google/callback',
-    passport.authenticate('google', { failureRedirect: '/login' }),
+    passport.authenticate('google', { session: false, failureRedirect: '/login' }),
     (req, res) => {
-        res.redirect(process.env.CLIENT_URL || 'https://todo-api-henna.vercel.app');
+        const token = jwt.sign(
+            { userId: req.user._id },
+            process.env.JWT_SECRET || 'your-secret-key',
+            { expiresIn: '7d' }
+        );
+        
+        const frontendURL = process.env.CLIENT_URL || 'http://localhost:5173';
+        res.redirect(`${frontendURL}?token=${token}`);
     }
 );
 
-app.get('/api/auth/user', isAuthenticated, (req, res) => {
+app.get('/api/auth/user', verifyToken, (req, res) => {
     res.json(req.user);
 });
 
-app.get('/api/auth/logout', (req, res) => {
-    req.logout((err) => {
-        if (err) return res.status(500).json({ message: 'Logout failed' });
-        res.json({ message: 'Logged out successfully' });
-    });
-});
-
 // Protected Todo routes
-app.get('/api/todos', isAuthenticated, async (req,res) => {
+app.get('/api/todos', verifyToken, async (req,res) => {
     const todos = await Todo.find({ userId: req.user._id });
     res.json(todos);
 });
 
-app.post('/api/todos', isAuthenticated, async (req, res) => {
+app.post('/api/todos', verifyToken, async (req, res) => {
     const {title} = req.body;
     if (!title){
         return res.status(400).json({message: 'Title is required'});
@@ -137,7 +127,7 @@ app.post('/api/todos', isAuthenticated, async (req, res) => {
     res.status(201).json(newTodo);
 });
 
-app.put('/api/todos/:id', isAuthenticated, async (req,res) => {
+app.put('/api/todos/:id', verifyToken, async (req,res) => {
     const update = await Todo.findOneAndUpdate(
         { _id: req.params.id, userId: req.user._id },
         req.body,
@@ -146,7 +136,7 @@ app.put('/api/todos/:id', isAuthenticated, async (req,res) => {
     res.json(update);
 });
 
-app.delete('/api/todos/:id', isAuthenticated, async (req,res) => {
+app.delete('/api/todos/:id', verifyToken, async (req,res) => {
     await Todo.findOneAndDelete({ _id: req.params.id, userId: req.user._id });
     res.json({message: 'Todo delete'});
 });

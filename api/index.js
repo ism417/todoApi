@@ -5,7 +5,6 @@ const serverless = require('serverless-http');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const session = require('express-session');
-const jwt = require('jsonwebtoken');
 
 const app = express();
 
@@ -51,7 +50,7 @@ const Users = mongoose.model('Users', usersSchema);
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: '/api/auth/google/callback'
+    callbackURL: 'https://todo-api-henna.vercel.app'
 }, async (accessToken, refreshToken, profile, done) => {
     try {
         let user = await Users.findOne({ googleId: profile.id });
@@ -61,7 +60,6 @@ passport.use(new GoogleStrategy({
                 googleId: profile.id,
                 email: profile.emails[0].value,
                 name: profile.displayName,
-                picture: profile.photos[0]?.value
             });
         }
         
